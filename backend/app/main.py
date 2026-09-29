@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routers import ROUTERS
+from app.services.operator import OperatorService
 from app.store import store
 
 app = FastAPI(title="特种设备点检运维平台", version="1.0.0")
@@ -34,5 +35,18 @@ def health() -> dict[str, object]:
 
 @app.get("/api/overview")
 def overview() -> dict[str, object]:
-    """运营概览：把各业务模块的待处理量汇总成看板卡片。"""
-    return store.overview()
+    """运营概览：把各业务模块的待处理量汇总成看板卡片；持证人数与单位台账同口径。"""
+    counts = OperatorService().certified_counts()  # 先重算，确保证照状态与 pending/abnormal 口径一致
+    data = store.overview()
+    cards = list(data.get("cards") or [])
+    found = False
+    for card in cards:
+        if card.get("label") == "持证人数":
+            card["value"] = counts["total_certified"]
+            found = True
+    if not found:
+        cards.append({"label": "持证人数", "value": counts["total_certified"]})
+    data["cards"] = cards
+    data["certifiedByUnit"] = counts["by_unit"]
+    data["certifiedMissing"] = counts["missing"]
+    return data

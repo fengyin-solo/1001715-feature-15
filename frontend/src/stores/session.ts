@@ -1,10 +1,13 @@
 import { defineStore } from 'pinia'
 
+export const UNITS = ['运行一班', '运行二班'] as const
+
 export const useSessionStore = defineStore('session', {
   state: () => ({
     operator: '值班管理员',
     shiftLabel: '白班 08:00-20:00',
     scope: '特种设备点检运维平台',
+    unit: '运行一班' as string,
   }),
   getters: {
     canOperate: (state) => state.operator.length > 0,
@@ -12,6 +15,9 @@ export const useSessionStore = defineStore('session', {
   actions: {
     setShift(label: string) {
       this.shiftLabel = label
+    },
+    setUnit(unit: string) {
+      this.unit = unit
     },
   },
 })

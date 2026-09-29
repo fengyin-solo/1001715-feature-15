@@ -1,9 +1,10 @@
-"""作业人员接口：维护作业人员，覆盖登记取证、标记过期、办理离岗等动作。"""
+"""作业人员接口：维护作业人员，覆盖登记取证、复审、归属变更、标记过期、办理离岗等动作。"""
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import unquote
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query
 
 from app.schemas import ActionResult, EntryPayload, PageResult
 from app.services.operator import OperatorService
@@ -14,20 +15,38 @@ service = OperatorService()
 
 LIST_FIELDS = ["人员编号", "人员姓名", "所属单位", "作业项目", "证件编号", "有效期至", "复审日期", "人员状态"]
 STATUSES = ["待取证", "在岗持证", "证件过期", "已离岗"]
+ACTIONS = ["登记取证", "复审", "归属变更", "标记过期", "办理离岗"]
 
 
 @router.get("", response_model=PageResult[dict])
 def list_entries(
-    keyword: str | None = Query(default=None, description="按人员编号检索"),
+    keyword: str | None = Query(default=None, description="按人员编号或姓名检索"),
     status: str | None = Query(default=None, description="待取证、在岗持证、证件过期、已离岗"),
+    unit: str | None = Query(default=None, description="按归属单位过滤"),
+    missing_only: bool = Query(default=False, description="只看证照信息缺失人员"),
     page: int = 1,
     size: int = 20,
 ) -> PageResult[dict]:
-    """按人员编号与状态过滤作业人员列表；没有数据时返回空页，不报错。"""
+    """按人员编号、姓名、状态与归属单位过滤作业人员列表；没有数据时返回空页，不报错。"""
     if size > 200:
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
-    items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
+    items, total = service.list_entries(
+        keyword=keyword, status=status, unit=unit, missing_only=missing_only, page=page, size=size
+    )
     return PageResult(items=items, total=total, page=page, size=size)
+
+
+@router.get("/unit-ledger")
+def unit_ledger() -> dict[str, Any]:
+    """单位台账：按单位统计持证人数，与运营概览的持证人数共用同一份口径。"""
+    return service.unit_ledger()
+
+
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出作业人员清单：返回当前过滤条件下的全量数据。"""
+    items, total = service.list_entries(page=1, size=10000)
+    return {"module": "operator", "total": total, "items": items}
 
 
 @router.get("/{entry_id}", response_model=dict)
@@ -49,17 +68,15 @@ def create_entry(payload: EntryPayload) -> ActionResult:
 
 
 @router.post("/{entry_id}/actions", response_model=ActionResult)
-def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
-    """对单条作业人员执行登记取证、标记过期、办理离岗；不允许的动作会被拦下并说明原因。"""
+def run_action(
+    entry_id: int,
+    payload: EntryPayload,
+    x_operator_unit: str | None = Header(default=None, description="当前值班管理员所属单位"),
+) -> ActionResult:
+    """对单条作业人员执行登记取证、复审、归属变更、标记过期、办理离岗；跨单位修改会被拦下并提示。"""
     action = str(payload.values.get("action") or "").strip()
-    entry, message = service.run_action(entry_id, action)
+    admin_unit = unquote(x_operator_unit) if x_operator_unit else None
+    entry, message = service.run_action(entry_id, action, admin_unit=admin_unit, values=payload.values)
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出作业人员清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "operator", "total": total, "items": items}
